@@ -1,4 +1,4 @@
-export type PointType = "corner" | "smooth";
+export type PointType = "corner" | "smooth" | "quadratic" | "arc";
 
 export interface ControlPoint {
   x: number;
@@ -12,6 +12,11 @@ export interface PathPoint {
   type: PointType;
   cp1?: ControlPoint; // incoming bezier handle
   cp2?: ControlPoint; // outgoing bezier handle
+  // arc-specific (type === "arc")
+  rx?: number;
+  ry?: number;
+  largeArc?: boolean;
+  sweep?: boolean;
 }
 
 export type PreviewMode = "solid" | "checkerboard" | "image";

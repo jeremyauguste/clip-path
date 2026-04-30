@@ -1,6 +1,7 @@
 import { create } from "zustand";
 import { PathPoint, CanvasSettings, PreviewMode } from "@/types/shape";
 import { generateCssOutput } from "@/lib/cssGenerator";
+import { computeShapeBounds } from "@/lib/bezierBounds";
 
 const MAX_HISTORY = 50;
 
@@ -32,6 +33,7 @@ interface EditorStore {
   undo: () => void;
   redo: () => void;
   pushHistory: () => void;
+  pushSpecificHistory: (pts: PathPoint[]) => void;
 
   // Canvas
   setCanvasSettings: (settings: Partial<CanvasSettings>) => void;
@@ -41,8 +43,13 @@ interface EditorStore {
   setActiveTool: (tool: "select" | "pen" | "hand") => void;
 
   // CSS
+  cssFormat: "percent" | "pixel";
+  setCssFormat: (format: "percent" | "pixel") => void;
   syncCssFromPoints: () => void;
   setCssOutput: (css: string) => void;
+
+  // Normalize origin: shift all points so none are negative, adjust canvas and panOffset
+  normalizeOrigin: () => void;
 
   // Load saved shape
   loadEditorState: (state: { points: PathPoint[]; canvasSettings: CanvasSettings }, cssOutput: string) => void;
@@ -66,6 +73,7 @@ export const useEditorStore = create<EditorStore>((set, get) => ({
   selectedPointId: null,
   activeTool: "select",
   cssOutput: "",
+  cssFormat: "percent",
   panOffset: { x: 0, y: 0 },
   zoom: 1,
 
@@ -92,6 +100,11 @@ export const useEditorStore = create<EditorStore>((set, get) => ({
       history: [...history.slice(-MAX_HISTORY + 1), [...points]],
       future: [],
     });
+  },
+
+  pushSpecificHistory: (pts) => {
+    const { history } = get();
+    set({ history: [...history.slice(-MAX_HISTORY + 1), [...pts]], future: [] });
   },
 
   setPoints: (points) => {
@@ -133,7 +146,27 @@ export const useEditorStore = create<EditorStore>((set, get) => ({
           cp2: p.cp2 ?? { x: p.x + 40, y: p.y },
         };
       }
-      return { ...p, type: "corner" as const, cp1: undefined, cp2: undefined };
+      if (p.type === "smooth") {
+        return {
+          ...p,
+          type: "quadratic" as const,
+          cp1: { x: p.x, y: p.y - 60 },
+          cp2: undefined,
+        };
+      }
+      if (p.type === "quadratic") {
+        return {
+          ...p,
+          type: "arc" as const,
+          cp1: undefined,
+          cp2: undefined,
+          rx: 80,
+          ry: 80,
+          largeArc: false,
+          sweep: true,
+        };
+      }
+      return { ...p, type: "corner" as const, cp1: undefined, cp2: undefined, rx: undefined, ry: undefined, largeArc: undefined, sweep: undefined };
     });
     set({ points });
     get().syncCssFromPoints();
@@ -177,17 +210,68 @@ export const useEditorStore = create<EditorStore>((set, get) => ({
 
   syncCssFromPoints: () => {
     const { points, canvasSettings } = get();
-    const css = generateCssOutput(points, canvasSettings.width, canvasSettings.height);
-    set({ cssOutput: css });
+
+    let { width, height } = canvasSettings;
+    if (points.length > 0) {
+      const bounds = computeShapeBounds(points);
+      if (bounds) {
+        width  = Math.max(1, Math.ceil(bounds.maxX));
+        height = Math.max(1, Math.ceil(bounds.maxY));
+      }
+    }
+
+    const updatedSettings =
+      width !== canvasSettings.width || height !== canvasSettings.height
+        ? { ...canvasSettings, width, height }
+        : canvasSettings;
+
+    const css = generateCssOutput(points, width, height, get().cssFormat);
+    set({ cssOutput: css, canvasSettings: updatedSettings });
   },
 
   setCssOutput: (css) => set({ cssOutput: css }),
+
+  setCssFormat: (format) => {
+    set({ cssFormat: format });
+    get().syncCssFromPoints();
+  },
+
+  normalizeOrigin: () => {
+    const { points, canvasSettings, panOffset, zoom } = get();
+    if (!points.length) return;
+    const bounds = computeShapeBounds(points);
+    if (!bounds) return;
+    const { minX, minY, maxX, maxY } = bounds;
+    if (minX >= 0 && minY >= 0) return;
+    const shiftX = minX < 0 ? -minX : 0;
+    const shiftY = minY < 0 ? -minY : 0;
+    const shifted = points.map((p) => ({
+      ...p,
+      x: p.x + shiftX,
+      y: p.y + shiftY,
+      cp1: p.cp1 ? { x: p.cp1.x + shiftX, y: p.cp1.y + shiftY } : undefined,
+      cp2: p.cp2 ? { x: p.cp2.x + shiftX, y: p.cp2.y + shiftY } : undefined,
+    }));
+    const newWidth = Math.max(1, Math.ceil(maxX + shiftX));
+    const newHeight = Math.max(1, Math.ceil(maxY + shiftY));
+    const css = generateCssOutput(shifted, newWidth, newHeight, get().cssFormat);
+    set({
+      points: shifted,
+      canvasSettings: { ...canvasSettings, width: newWidth, height: newHeight },
+      cssOutput: css,
+      panOffset: {
+        x: panOffset.x - shiftX * zoom,
+        y: panOffset.y - shiftY * zoom,
+      },
+    });
+  },
 
   loadEditorState: (state, cssOutput) => {
     set({
       points: state.points,
       canvasSettings: state.canvasSettings,
       cssOutput,
+      cssFormat: "percent",
       history: [],
       future: [],
       selectedPointId: null,

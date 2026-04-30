@@ -1,8 +1,10 @@
 "use client";
 
-import { useRef, useCallback, RefObject, useState } from "react";
+import { useRef, useCallback, RefObject, useState, useEffect } from "react";
+import { createPortal } from "react-dom";
 import { useEditorStore } from "@/store/editorStore";
 import { PathPoint } from "@/types/shape";
+import { buildSvgPath } from "@/lib/cssGenerator";
 
 function uid() {
   return Math.random().toString(36).slice(2, 9);
@@ -35,6 +37,85 @@ interface Props {
   zoomRef: RefObject<number>;
 }
 
+const TYPE_LABEL: Record<string, string> = {
+  corner: "Corner",
+  smooth: "Smooth (Cubic)",
+  quadratic: "Quadratic",
+  arc: "Arc",
+};
+
+// Arc midpoint via sagitta formula (works for rx≈ry circular arcs and gives a reasonable
+// visual approximation for elliptical ones).
+function arcHandlePoint(p1: PathPoint, p2: PathPoint): { x: number; y: number } {
+  const dx = p2.x - p1.x, dy = p2.y - p1.y;
+  const d = Math.hypot(dx, dy);
+  if (d < 1e-6) return { x: p1.x, y: p1.y };
+
+  const rx = p2.rx ?? 50;
+  const half = d / 2;
+  const r = Math.max(rx, half + 0.01);
+  const sagittaBase = Math.sqrt(r * r - half * half);
+  const h = p2.largeArc ? r + sagittaBase : r - sagittaBase;
+  const ux = dx / d, uy = dy / d;
+  const sign = p2.sweep !== false ? 1 : -1;
+  return {
+    x: (p1.x + p2.x) / 2 + h * (-sign * uy),
+    y: (p1.y + p2.y) / 2 + h * (sign * ux),
+  };
+}
+
+// Convert a drag position into updated arc parameters.
+function dragToArcParams(drag: { x: number; y: number }, p1: PathPoint, p2: PathPoint): Partial<PathPoint> {
+  const dx = p2.x - p1.x, dy = p2.y - p1.y;
+  const d = Math.hypot(dx, dy);
+  if (d < 1e-6) return {};
+
+  const ux = dx / d, uy = dy / d;
+  const midX = (p1.x + p2.x) / 2, midY = (p1.y + p2.y) / 2;
+
+  // Signed perpendicular distance from drag to chord.
+  // Positive side = sweep=1 direction = (-uy, ux).
+  const hSigned = (drag.x - midX) * (-uy) + (drag.y - midY) * ux;
+  const sweep = hSigned > 0;
+  const h = Math.max(Math.abs(hSigned), 2); // min 2px sagitta
+  const half = d / 2;
+  const r = (h * h + half * half) / (2 * h);
+  const largeArc = h > half;
+
+  return { rx: r, ry: r, sweep, largeArc };
+}
+
+function PointTooltip({ point, index, clientX, clientY }: { point: PathPoint; index: number; clientX: number; clientY: number }) {
+  const x = Math.min(clientX + 14, window.innerWidth - 170);
+  const y = Math.max(clientY - 8, 8);
+  const fmt = (n: number) => n.toFixed(1);
+  return (
+    <div
+      className="fixed z-50 pointer-events-none bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-700 rounded-lg px-3 py-2 text-xs shadow-xl min-w-[140px]"
+      style={{ left: x, top: y }}
+    >
+      <div className="flex items-center gap-2 mb-1.5">
+        <span className="text-neutral-500 dark:text-neutral-500">#{index + 1}</span>
+        <span className="text-neutral-800 dark:text-neutral-200 font-medium">{TYPE_LABEL[point.type] ?? point.type}</span>
+      </div>
+      <div className="flex gap-3 text-neutral-700 dark:text-neutral-300">
+        <span><span className="text-neutral-500 dark:text-neutral-500">x </span>{fmt(point.x)}</span>
+        <span><span className="text-neutral-500 dark:text-neutral-500">y </span>{fmt(point.y)}</span>
+      </div>
+      {point.cp1 && (
+        <div className="mt-1 text-neutral-600 dark:text-neutral-500">
+          cp1 <span className="text-neutral-700 dark:text-neutral-400">({fmt(point.cp1.x)}, {fmt(point.cp1.y)})</span>
+        </div>
+      )}
+      {point.cp2 && (
+        <div className="text-neutral-600 dark:text-neutral-500">
+          cp2 <span className="text-neutral-700 dark:text-neutral-400">({fmt(point.cp2.x)}, {fmt(point.cp2.y)})</span>
+        </div>
+      )}
+    </div>
+  );
+}
+
 export function SvgOverlay({ width, height, zoom, viewportRef, panOffset, panOffsetRef, zoomRef }: Props) {
   const {
     points,
@@ -45,12 +126,17 @@ export function SvgOverlay({ width, height, zoom, viewportRef, panOffset, panOff
     togglePointType,
     setPoints,
     pushHistory,
+    normalizeOrigin,
     activeTool,
   } = useEditorStore();
 
   const draggingId = useRef<string | null>(null);
   const draggingHandle = useRef<"cp1" | "cp2" | null>(null);
+  const draggingArcId = useRef<string | null>(null);
   const [hoverPoint, setHoverPoint] = useState<{ x: number; y: number; edgeIndex: number } | null>(null);
+  const [pointTooltip, setPointTooltip] = useState<{ point: PathPoint; index: number; clientX: number; clientY: number } | null>(null);
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => { setMounted(true); }, []);
 
   // Convert viewport client coords → canvas coords using live refs
   const toCanvas = useCallback(
@@ -66,11 +152,24 @@ export function SvgOverlay({ width, height, zoom, viewportRef, panOffset, panOff
 
   const startDrag = useCallback(
     (e: React.PointerEvent, id: string, handle?: "cp1" | "cp2") => {
-      if (activeTool !== "select") return;
+      if (activeTool !== "select" && activeTool !== "pen") return;
       e.stopPropagation();
       e.currentTarget.setPointerCapture(e.pointerId);
       draggingId.current = id;
       draggingHandle.current = handle ?? null;
+      setPointTooltip(null);
+      pushHistory();
+    },
+    [activeTool, pushHistory]
+  );
+
+  const startArcDrag = useCallback(
+    (e: React.PointerEvent, id: string) => {
+      if (activeTool !== "select") return;
+      e.stopPropagation();
+      e.currentTarget.setPointerCapture(e.pointerId);
+      draggingArcId.current = id;
+      setPointTooltip(null);
       pushHistory();
     },
     [activeTool, pushHistory]
@@ -78,13 +177,23 @@ export function SvgOverlay({ width, height, zoom, viewportRef, panOffset, panOff
 
   const onPointerMove = useCallback(
     (e: React.PointerEvent<SVGSVGElement>) => {
-      if (!draggingId.current) return;
+      if (!draggingId.current && !draggingArcId.current) return;
       e.stopPropagation();
-      const { x, y } = toCanvas(e.clientX, e.clientY);
-      const cx = Math.max(0, Math.min(width, x));
-      const cy = Math.max(0, Math.min(height, y));
+      const { x: cx, y: cy } = toCanvas(e.clientX, e.clientY);
 
-      const id = draggingId.current;
+      if (draggingArcId.current) {
+        const id = draggingArcId.current;
+        const pts = useEditorStore.getState().points;
+        const idx = pts.findIndex((p) => p.id === id);
+        if (idx >= 0) {
+          const p2 = pts[idx];
+          const p1 = idx > 0 ? pts[idx - 1] : pts[pts.length - 1];
+          updatePoint(id, dragToArcParams({ x: cx, y: cy }, p1, p2));
+        }
+        return;
+      }
+
+      const id = draggingId.current!;
       const handle = draggingHandle.current;
 
       // Direct DOM update for smooth drag
@@ -105,13 +214,15 @@ export function SvgOverlay({ width, height, zoom, viewportRef, panOffset, panOff
         updatePoint(id, { x: cx, y: cy });
       }
     },
-    [toCanvas, width, height, updatePoint]
+    [toCanvas, updatePoint]
   );
 
   const onPointerUp = useCallback(() => {
+    if (draggingId.current || draggingArcId.current) normalizeOrigin();
     draggingId.current = null;
     draggingHandle.current = null;
-  }, []);
+    draggingArcId.current = null;
+  }, [normalizeOrigin]);
 
   const handlePointDoubleClick = useCallback(
     (e: React.MouseEvent, id: string) => {
@@ -177,33 +288,6 @@ export function SvgOverlay({ width, height, zoom, viewportRef, panOffset, panOff
     [activeTool, pushHistory, setPoints]
   );
 
-  const buildPath = (): string => {
-    if (!points.length) return "";
-    const [first, ...rest] = points;
-    let d = `M ${first.x} ${first.y}`;
-    for (let i = 0; i < rest.length; i++) {
-      const p = rest[i];
-      const prev = points[i];
-      if (p.type === "smooth" || prev.type === "smooth") {
-        const cp1 = prev.cp2 ?? { x: prev.x, y: prev.y };
-        const cp2 = p.cp1 ?? { x: p.x, y: p.y };
-        d += ` C ${cp1.x} ${cp1.y}, ${cp2.x} ${cp2.y}, ${p.x} ${p.y}`;
-      } else {
-        d += ` L ${p.x} ${p.y}`;
-      }
-    }
-    if (points.length > 2) {
-      const last = points[points.length - 1];
-      if (last.type === "smooth" || first.type === "smooth") {
-        const cp1 = last.cp2 ?? { x: last.x, y: last.y };
-        const cp2 = first.cp1 ?? { x: first.x, y: first.y };
-        d += ` C ${cp1.x} ${cp1.y}, ${cp2.x} ${cp2.y}, ${first.x} ${first.y}`;
-      } else {
-        d += " Z";
-      }
-    }
-    return d;
-  };
 
   // Scale handle sizes inversely with zoom so they stay visually consistent
   const r = 7 / zoom;
@@ -212,6 +296,7 @@ export function SvgOverlay({ width, height, zoom, viewportRef, panOffset, panOff
   const outlineStroke = 1.5 / zoom;
 
   return (
+  <>
     <svg
       className="absolute inset-0 overflow-visible"
       width={width}
@@ -230,7 +315,7 @@ export function SvgOverlay({ width, height, zoom, viewportRef, panOffset, panOff
       {/* Shape outline */}
       {points.length > 1 && (
         <path
-          d={buildPath()}
+          d={buildSvgPath(points)}
           fill="none"
           stroke="#a78bfa"
           strokeWidth={outlineStroke}
@@ -263,6 +348,21 @@ export function SvgOverlay({ width, height, zoom, viewportRef, panOffset, panOff
 
       {/* Bezier control handles */}
       {points.map((p) => {
+        if (p.type === "quadratic") {
+          if (!p.cp1) return null;
+          return (
+            <g key={`handles-${p.id}`}>
+              <line x1={p.x} y1={p.y} x2={p.cp1.x} y2={p.cp1.y} stroke="#34d399" strokeWidth={1 / zoom} strokeDasharray={`${3 / zoom} ${2 / zoom}`} pointerEvents="none" />
+              <circle
+                data-handle={`${p.id}-cp1`}
+                cx={p.cp1.x} cy={p.cp1.y} r={rHandle}
+                fill="#34d399"
+                className="cursor-move"
+                onPointerDown={(e) => startDrag(e, p.id, "cp1")}
+              />
+            </g>
+          );
+        }
         if (p.type !== "smooth") return null;
         return (
           <g key={`handles-${p.id}`}>
@@ -294,6 +394,27 @@ export function SvgOverlay({ width, height, zoom, viewportRef, panOffset, panOff
         );
       })}
 
+      {/* Arc midpoint handles (select tool) */}
+      {activeTool === "select" && points.map((p, i) => {
+        if (p.type !== "arc") return null;
+        const prev = i > 0 ? points[i - 1] : points[points.length - 1];
+        if (!prev || points.length < 2) return null;
+        const hp = arcHandlePoint(prev, p);
+        return (
+          <circle
+            key={`arc-handle-${p.id}`}
+            cx={hp.x}
+            cy={hp.y}
+            r={rHandle}
+            fill="#38bdf8"
+            stroke="white"
+            strokeWidth={strokeW}
+            className="cursor-move"
+            onPointerDown={(e) => startArcDrag(e, p.id)}
+          />
+        );
+      })}
+
       {/* Edge hover ghost (pen tool) */}
       {activeTool === "pen" && hoverPoint && (
         <circle
@@ -309,7 +430,7 @@ export function SvgOverlay({ width, height, zoom, viewportRef, panOffset, panOff
       )}
 
       {/* Vertex points */}
-      {points.map((p) => (
+      {points.map((p, i) => (
         <circle
           key={p.id}
           data-point={p.id}
@@ -323,8 +444,23 @@ export function SvgOverlay({ width, height, zoom, viewportRef, panOffset, panOff
           onClick={(e) => { e.stopPropagation(); setSelectedPointId(p.id); }}
           onDoubleClick={(e) => handlePointDoubleClick(e, p.id)}
           onKeyDown={(e) => handlePointKeyDown(e, p.id)}
+          onMouseEnter={(e) => { if (!draggingId.current && !draggingArcId.current) setPointTooltip({ point: p, index: i, clientX: e.clientX, clientY: e.clientY }); }}
+          onMouseMove={(e) => { if (!draggingId.current && !draggingArcId.current) setPointTooltip((prev) => prev ? { ...prev, clientX: e.clientX, clientY: e.clientY } : null); }}
+          onMouseLeave={() => setPointTooltip(null)}
         />
       ))}
     </svg>
+
+    {mounted && pointTooltip && createPortal(
+      <PointTooltip
+        point={pointTooltip.point}
+        index={pointTooltip.index}
+        clientX={pointTooltip.clientX}
+        clientY={pointTooltip.clientY}
+      />,
+      document.body
+    )}
+  </>
   );
 }
+

@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button";
 import { useEditorStore } from "@/store/editorStore";
 import { useState } from "react";
 import { Save, LogIn, LogOut, LayoutDashboard } from "lucide-react";
+import { ThemeToggle } from "@/components/ThemeToggle";
 import Link from "next/link";
 
 export function EditorHeader() {
@@ -35,14 +36,14 @@ export function EditorHeader() {
   };
 
   return (
-    <header className="flex items-center justify-between h-12 px-4 bg-neutral-900 border-b border-neutral-800 flex-shrink-0">
+    <header className="flex items-center justify-between h-12 px-4 bg-white dark:bg-neutral-900 border-b border-neutral-200 dark:border-neutral-800 flex-shrink-0">
       <div className="flex items-center gap-3">
-        <span className="font-semibold text-sm text-white tracking-tight">Clip Path Editor</span>
+        <span className="font-semibold text-sm text-neutral-900 dark:text-white tracking-tight">Clip Path Editor</span>
       </div>
       <div className="flex items-center gap-2">
         {session && (
           <Link href="/dashboard">
-            <Button size="sm" variant="ghost" className="text-neutral-400 hover:text-white h-8">
+            <Button size="sm" variant="ghost" className="text-neutral-700 dark:text-neutral-400 hover:text-neutral-900 dark:hover:text-white h-8">
               <LayoutDashboard className="w-3.5 h-3.5 mr-1" />
               My Shapes
             </Button>
@@ -51,7 +52,7 @@ export function EditorHeader() {
         <Button
           size="sm"
           variant="ghost"
-          className="text-neutral-400 hover:text-white h-8"
+          className="text-neutral-700 dark:text-neutral-400 hover:text-neutral-900 dark:hover:text-white h-8"
           onClick={handleSave}
           disabled={saving || !points.length}
         >
@@ -62,7 +63,7 @@ export function EditorHeader() {
           <Button
             size="sm"
             variant="ghost"
-            className="text-neutral-400 hover:text-white h-8"
+            className="text-neutral-700 dark:text-neutral-400 hover:text-neutral-900 dark:hover:text-white h-8"
             onClick={() => signOut()}
           >
             <LogOut className="w-3.5 h-3.5 mr-1" />
@@ -77,6 +78,7 @@ export function EditorHeader() {
         {session?.user?.image && (
           <img src={session.user.image} alt="" className="w-7 h-7 rounded-full" />
         )}
+        <ThemeToggle />
       </div>
     </header>
   );

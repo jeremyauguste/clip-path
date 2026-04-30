@@ -4,7 +4,7 @@ import { Suspense } from "react";
 import { Toolbar } from "./Toolbar";
 import { Canvas } from "./Canvas";
 import { CodePanel } from "./CodePanel";
-import { ScalePanel } from "./ScalePanel";
+import { CanvasSettingsBar } from "./CanvasSettingsBar";
 import { EditorHeader } from "./EditorHeader";
 import { BoundingBox } from "./BoundingBox";
 import { useEditorInit } from "@/hooks/useEditorInit";
@@ -21,7 +21,7 @@ function EditorInner() {
         <Toolbar />
         <div className="flex-1 relative overflow-hidden">
           <Canvas />
-          <ScalePanel />
+          <CanvasSettingsBar />
         </div>
         <div className="w-72 flex-shrink-0">
           <CodePanel />

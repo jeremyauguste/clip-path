@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, useCallback, useEffect } from "react";
+import { useRef, useCallback, useEffect, useLayoutEffect } from "react";
 import { useEditorStore } from "@/store/editorStore";
 import { PathPoint } from "@/types/shape";
 import { SvgOverlay } from "./SvgOverlay";
@@ -25,6 +25,7 @@ export function Canvas() {
   const isPanning = useRef(false);
   const lastPan = useRef({ x: 0, y: 0 });
   const rafRef = useRef<number | null>(null);
+  const didInitCenter = useRef(false);
 
   const {
     canvasSettings,
@@ -75,9 +76,15 @@ export function Canvas() {
     });
   }, []);
 
+  // Keep DOM transform in sync when Zustand panOffset changes (e.g., after normalizeOrigin)
+  useLayoutEffect(() => {
+    applyTransform();
+  }, [panOffset.x, panOffset.y, applyTransform]);
+
   // Center on mount and when canvas size changes
   useEffect(() => {
-    if (!viewportRef.current) return;
+    if (!viewportRef.current || didInitCenter.current) return;
+    didInitCenter.current = true;
     const rect = viewportRef.current.getBoundingClientRect();
     const x = (rect.width - width) / 2;
     const y = (rect.height - height) / 2;
@@ -156,6 +163,7 @@ export function Canvas() {
     const y = (e.clientY - rect.top - panOffsetRef.current.y) / zoomRef.current;
     const newPoint: PathPoint = { id: uid(), x, y, type: "corner" };
     useEditorStore.getState().addPoint(newPoint);
+    useEditorStore.getState().normalizeOrigin();
   }, []);
 
   const clipValue = cssOutput
@@ -193,7 +201,7 @@ export function Canvas() {
   return (
     <div
       ref={viewportRef}
-      className="w-full h-full overflow-hidden bg-neutral-800 relative"
+      className="w-full h-full overflow-hidden bg-neutral-200 dark:bg-neutral-800 relative"
       style={{ cursor: cursorStyle }}
       onPointerDown={handlePointerDown}
       onPointerMove={handlePointerMove}
@@ -206,7 +214,7 @@ export function Canvas() {
         className="absolute inset-0 pointer-events-none"
         style={{
           backgroundImage:
-            "linear-gradient(rgba(255,255,255,0.1) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,0.1) 1px, transparent 1px)",
+            "linear-gradient(var(--grid-line-color) 1px, transparent 1px), linear-gradient(90deg, var(--grid-line-color) 1px, transparent 1px)",
           backgroundSize: "40px 40px",
         }}
       />
@@ -221,25 +229,31 @@ export function Canvas() {
           height,
         }}
       >
-        <div ref={canvasRef} style={{ width, height, position: "relative" }}>
-          <div
-            className="absolute inset-0 pointer-events-none"
-            style={{ clipPath: clipValue, ...background }}
-          />
-          <SvgOverlay
-            width={width}
-            height={height}
-            zoom={zoom}
-            viewportRef={viewportRef}
-            panOffset={panOffset}
-            panOffsetRef={panOffsetRef}
-            zoomRef={zoomRef}
-          />
-          <BoundingBox zoom={zoom} />
-        </div>
+        {/* The element itself — clip-path applied directly so the shape IS the element */}
+        <div
+          ref={canvasRef}
+          style={{
+            position: "absolute",
+            width,
+            height,
+            pointerEvents: "none",
+            ...(clipValue ? { clipPath: clipValue, ...background } : {}),
+          }}
+        />
+        {/* Editing overlays — siblings of the element, not clipped */}
+        <SvgOverlay
+          width={width}
+          height={height}
+          zoom={zoom}
+          viewportRef={viewportRef}
+          panOffset={panOffset}
+          panOffsetRef={panOffsetRef}
+          zoomRef={zoomRef}
+        />
+        <BoundingBox zoom={zoom} />
       </div>
 
-      <div className="absolute bottom-4 right-4 text-xs text-neutral-500 select-none pointer-events-none">
+      <div className="absolute bottom-4 right-4 text-xs text-neutral-400 dark:text-neutral-500 select-none pointer-events-none">
         {Math.round(zoom * 100)}%
       </div>
     </div>

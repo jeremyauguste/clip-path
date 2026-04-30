@@ -13,7 +13,7 @@ interface HandleDef {
 }
 
 export function BoundingBox({ zoom }: { zoom: number }) {
-  const { points, setPoints, pushHistory, activeTool } = useEditorStore();
+  const { points, setPoints, pushHistory, normalizeOrigin, activeTool } = useEditorStore();
 
   const dragging = useRef<{
     handleId: string;
@@ -88,8 +88,9 @@ export function BoundingBox({ zoom }: { zoom: number }) {
   );
 
   const onPointerUp = useCallback(() => {
+    if (dragging.current) normalizeOrigin();
     dragging.current = null;
-  }, []);
+  }, [normalizeOrigin]);
 
   // All hooks above this line — safe to return early now
   if (activeTool !== "select" || points.length < 2) return null;
