@@ -3,8 +3,9 @@ import { prisma } from "@/lib/prisma";
 import { redirect } from "next/navigation";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
-import { Plus, Pencil } from "lucide-react";
-import { DeleteShapeButton } from "@/components/dashboard/DeleteShapeButton";
+import { Plus } from "lucide-react";
+import { ShapeCard } from "@/components/dashboard/ShapeCard";
+import { PathPoint, CanvasSettings } from "@/types/shape";
 
 export default async function DashboardPage() {
   const session = await auth();
@@ -43,41 +44,21 @@ export default async function DashboardPage() {
           </div>
         ) : (
           <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-4">
-            {shapes.map((shape: typeof shapes[number]) => (
-              <div
-                key={shape.id}
-                className="group relative bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800 rounded-lg overflow-hidden hover:border-violet-500 transition-colors"
-              >
-                {/* Shape preview */}
-                <div className="h-36 flex items-center justify-center bg-neutral-100 dark:bg-neutral-950 p-4">
-                  <div
-                    className="w-full h-full bg-violet-500/60"
-                    style={{
-                      clipPath: (shape.cssOutput as string)
-                        .replace(/^clip-path:\s*/, "")
-                        .replace(/;$/, ""),
-                    }}
-                  />
-                </div>
-
-                <div className="p-3">
-                  <p className="text-sm font-medium truncate">{shape.name}</p>
-                  <p className="text-xs text-neutral-500 dark:text-neutral-400 mt-0.5">
-                    {new Date(shape.updatedAt).toLocaleDateString()}
-                  </p>
-                </div>
-
-                {/* Hover actions */}
-                <div className="absolute top-2 right-2 flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                  <Link href={`/editor?shape=${shape.id}`}>
-                    <Button size="icon" variant="secondary" className="h-7 w-7">
-                      <Pencil className="w-3 h-3" />
-                    </Button>
-                  </Link>
-                  <DeleteShapeButton id={shape.id} />
-                </div>
-              </div>
-            ))}
+            {shapes.map((shape) => {
+              const editorState = shape.editorState as { points: PathPoint[]; canvasSettings: CanvasSettings } | null;
+              const points = editorState?.points ?? [];
+              return (
+                <ShapeCard
+                  key={shape.id}
+                  id={shape.id}
+                  name={shape.name}
+                  canvasWidth={shape.canvasWidth}
+                  canvasHeight={shape.canvasHeight}
+                  points={points}
+                  updatedAt={shape.updatedAt.toISOString()}
+                />
+              );
+            })}
           </div>
         )}
       </main>

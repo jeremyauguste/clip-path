@@ -134,9 +134,19 @@ export function SvgOverlay({ width, height, zoom, viewportRef, panOffset, panOff
   const draggingHandle = useRef<"cp1" | "cp2" | null>(null);
   const draggingArcId = useRef<string | null>(null);
   const [hoverPoint, setHoverPoint] = useState<{ x: number; y: number; edgeIndex: number } | null>(null);
+  const [hoveredPointId, setHoveredPointId] = useState<string | null>(null);
   const [pointTooltip, setPointTooltip] = useState<{ point: PathPoint; index: number; clientX: number; clientY: number } | null>(null);
   const [mounted, setMounted] = useState(false);
   useEffect(() => { setMounted(true); }, []);
+
+  useEffect(() => {
+    const handler = (e: MouseEvent) => {
+      if ((e.target as Element).closest("[data-point]")) return;
+      setSelectedPointId(null);
+    };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, [setSelectedPointId]);
 
   // Convert viewport client coords → canvas coords using live refs
   const toCanvas = useCallback(
@@ -179,7 +189,12 @@ export function SvgOverlay({ width, height, zoom, viewportRef, panOffset, panOff
     (e: React.PointerEvent<SVGSVGElement>) => {
       if (!draggingId.current && !draggingArcId.current) return;
       e.stopPropagation();
-      const { x: cx, y: cy } = toCanvas(e.clientX, e.clientY);
+      let { x: cx, y: cy } = toCanvas(e.clientX, e.clientY);
+      const { snapToGrid, gridSize } = useEditorStore.getState();
+      if (snapToGrid && !draggingArcId.current && !draggingHandle.current) {
+        cx = Math.round(cx / gridSize) * gridSize;
+        cy = Math.round(cy / gridSize) * gridSize;
+      }
 
       if (draggingArcId.current) {
         const id = draggingArcId.current;
@@ -275,6 +290,11 @@ export function SvgOverlay({ width, height, zoom, viewportRef, panOffset, panOff
     (e: React.MouseEvent, afterIndex: number, mx: number, my: number) => {
       if (activeTool !== "pen") return;
       e.stopPropagation();
+      const { snapToGrid, gridSize } = useEditorStore.getState();
+      if (snapToGrid) {
+        mx = Math.round(mx / gridSize) * gridSize;
+        my = Math.round(my / gridSize) * gridSize;
+      }
       const newPoint: PathPoint = { id: uid(), x: mx, y: my, type: "corner" };
       pushHistory();
       const current = useEditorStore.getState().points;
@@ -309,6 +329,8 @@ export function SvgOverlay({ width, height, zoom, viewportRef, panOffset, panOff
       onClick={(e) => {
         if (activeTool === "pen" && hoverPoint) {
           handleEdgeClick(e, hoverPoint.edgeIndex, hoverPoint.x, hoverPoint.y);
+        } else if (activeTool === "select") {
+          setSelectedPointId(null);
         }
       }}
     >
@@ -430,25 +452,33 @@ export function SvgOverlay({ width, height, zoom, viewportRef, panOffset, panOff
       )}
 
       {/* Vertex points */}
-      {points.map((p, i) => (
-        <circle
-          key={p.id}
-          data-point={p.id}
-          cx={p.x} cy={p.y} r={r}
-          fill={selectedPointId === p.id ? "#f0abfc" : "#a78bfa"}
-          stroke="white"
-          strokeWidth={strokeW}
-          tabIndex={0}
-          className="cursor-move focus:outline-none"
-          onPointerDown={(e) => startDrag(e, p.id)}
-          onClick={(e) => { e.stopPropagation(); setSelectedPointId(p.id); }}
-          onDoubleClick={(e) => handlePointDoubleClick(e, p.id)}
-          onKeyDown={(e) => handlePointKeyDown(e, p.id)}
-          onMouseEnter={(e) => { if (!draggingId.current && !draggingArcId.current) setPointTooltip({ point: p, index: i, clientX: e.clientX, clientY: e.clientY }); }}
-          onMouseMove={(e) => { if (!draggingId.current && !draggingArcId.current) setPointTooltip((prev) => prev ? { ...prev, clientX: e.clientX, clientY: e.clientY } : null); }}
-          onMouseLeave={() => setPointTooltip(null)}
-        />
-      ))}
+      {points.map((p, i) => {
+        const isSelected = selectedPointId === p.id;
+        const isHovered = hoveredPointId === p.id;
+        const solid = isSelected || isHovered;
+        return (
+          <circle
+            key={p.id}
+            data-point={p.id}
+            cx={p.x} cy={p.y} r={r}
+            fill={solid ? (isSelected ? "#f0abfc" : "#a78bfa") : "transparent"}
+            stroke={isSelected ? "#f0abfc" : "#a78bfa"}
+            strokeWidth={strokeW}
+            tabIndex={0}
+            className="cursor-move focus:outline-none"
+            onPointerDown={(e) => startDrag(e, p.id)}
+            onClick={(e) => { e.stopPropagation(); setSelectedPointId(p.id); }}
+            onDoubleClick={(e) => handlePointDoubleClick(e, p.id)}
+            onKeyDown={(e) => handlePointKeyDown(e, p.id)}
+            onMouseEnter={(e) => {
+              setHoveredPointId(p.id);
+              if (!draggingId.current && !draggingArcId.current) setPointTooltip({ point: p, index: i, clientX: e.clientX, clientY: e.clientY });
+            }}
+            onMouseMove={(e) => { if (!draggingId.current && !draggingArcId.current) setPointTooltip((prev) => prev ? { ...prev, clientX: e.clientX, clientY: e.clientY } : null); }}
+            onMouseLeave={() => { setHoveredPointId(null); setPointTooltip(null); }}
+          />
+        );
+      })}
     </svg>
 
     {mounted && pointTooltip && createPortal(

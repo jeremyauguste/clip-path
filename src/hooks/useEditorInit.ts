@@ -23,7 +23,7 @@ export function useEditorInit() {
       .then((r) => r.json())
       .then((shape) => {
         if (shape.error) return;
-        loadEditorState(shape.editorState as EditorState, shape.cssOutput as string);
+        loadEditorState(shape.editorState as EditorState, shape.cssOutput as string, shapeId, shape.name as string);
       })
       .catch(() => {});
   }, [shapeId, session]);

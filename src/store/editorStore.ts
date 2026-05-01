@@ -5,14 +5,24 @@ import { computeShapeBounds } from "@/lib/bezierBounds";
 
 const MAX_HISTORY = 50;
 
+interface HistorySnapshot {
+  points: PathPoint[];
+  imagePosition: { x: number; y: number };
+  imageSize: number;
+}
+
 interface EditorStore {
   points: PathPoint[];
-  history: PathPoint[][];
-  future: PathPoint[][];
+  history: HistorySnapshot[];
+  future: HistorySnapshot[];
   canvasSettings: CanvasSettings;
   selectedPointId: string | null;
   activeTool: "select" | "pen" | "hand";
   cssOutput: string;
+  shapeName: string;
+  shapeId: string | null;
+  setShapeName: (name: string) => void;
+  setShapeId: (id: string | null) => void;
 
   // Viewport
   panOffset: { x: number; y: number };
@@ -42,6 +52,12 @@ interface EditorStore {
   // Tool
   setActiveTool: (tool: "select" | "pen" | "hand") => void;
 
+  // Snap to grid
+  snapToGrid: boolean;
+  gridSize: number;
+  setSnapToGrid: (snap: boolean) => void;
+  setGridSize: (size: number) => void;
+
   // CSS
   cssFormat: "percent" | "pixel";
   setCssFormat: (format: "percent" | "pixel") => void;
@@ -52,7 +68,7 @@ interface EditorStore {
   normalizeOrigin: () => void;
 
   // Load saved shape
-  loadEditorState: (state: { points: PathPoint[]; canvasSettings: CanvasSettings }, cssOutput: string) => void;
+  loadEditorState: (state: { points: PathPoint[]; canvasSettings: CanvasSettings }, cssOutput: string, shapeId?: string | null, shapeName?: string) => void;
 }
 
 const defaultCanvas: CanvasSettings = {
@@ -60,6 +76,8 @@ const defaultCanvas: CanvasSettings = {
   height: 400,
   previewMode: "solid",
   previewColor: "#6366f1",
+  imagePosition: { x: 50, y: 50 },
+  imageSize: 100,
 };
 
 const MIN_ZOOM = 0.1;
@@ -76,6 +94,10 @@ export const useEditorStore = create<EditorStore>((set, get) => ({
   cssFormat: "percent",
   panOffset: { x: 0, y: 0 },
   zoom: 1,
+  snapToGrid: false,
+  gridSize: 10,
+  shapeName: "Untitled Shape",
+  shapeId: null,
 
   setPanOffset: (offset) => set({ panOffset: offset }),
 
@@ -95,16 +117,23 @@ export const useEditorStore = create<EditorStore>((set, get) => ({
   },
 
   pushHistory: () => {
-    const { points, history } = get();
-    set({
-      history: [...history.slice(-MAX_HISTORY + 1), [...points]],
-      future: [],
-    });
+    const { points, canvasSettings, history } = get();
+    const snap: HistorySnapshot = {
+      points: [...points],
+      imagePosition: { ...(canvasSettings.imagePosition ?? { x: 50, y: 50 }) },
+      imageSize: canvasSettings.imageSize ?? 100,
+    };
+    set({ history: [...history.slice(-MAX_HISTORY + 1), snap], future: [] });
   },
 
   pushSpecificHistory: (pts) => {
-    const { history } = get();
-    set({ history: [...history.slice(-MAX_HISTORY + 1), [...pts]], future: [] });
+    const { canvasSettings, history } = get();
+    const snap: HistorySnapshot = {
+      points: [...pts],
+      imagePosition: { ...(canvasSettings.imagePosition ?? { x: 50, y: 50 }) },
+      imageSize: canvasSettings.imageSize ?? 100,
+    };
+    set({ history: [...history.slice(-MAX_HISTORY + 1), snap], future: [] });
   },
 
   setPoints: (points) => {
@@ -175,25 +204,37 @@ export const useEditorStore = create<EditorStore>((set, get) => ({
   setSelectedPointId: (id) => set({ selectedPointId: id }),
 
   undo: () => {
-    const { history, points, future } = get();
+    const { history, points, canvasSettings, future } = get();
     if (!history.length) return;
     const prev = history[history.length - 1];
+    const snap: HistorySnapshot = {
+      points: [...points],
+      imagePosition: { ...(canvasSettings.imagePosition ?? { x: 50, y: 50 }) },
+      imageSize: canvasSettings.imageSize ?? 100,
+    };
     set({
-      points: prev,
+      points: prev.points,
+      canvasSettings: { ...canvasSettings, imagePosition: prev.imagePosition, imageSize: prev.imageSize },
       history: history.slice(0, -1),
-      future: [points, ...future],
+      future: [snap, ...future],
     });
     get().syncCssFromPoints();
   },
 
   redo: () => {
-    const { future, points, history } = get();
+    const { future, points, canvasSettings, history } = get();
     if (!future.length) return;
     const next = future[0];
+    const snap: HistorySnapshot = {
+      points: [...points],
+      imagePosition: { ...(canvasSettings.imagePosition ?? { x: 50, y: 50 }) },
+      imageSize: canvasSettings.imageSize ?? 100,
+    };
     set({
-      points: next,
+      points: next.points,
+      canvasSettings: { ...canvasSettings, imagePosition: next.imagePosition, imageSize: next.imageSize },
       future: future.slice(1),
-      history: [...history, points],
+      history: [...history, snap],
     });
     get().syncCssFromPoints();
   },
@@ -207,6 +248,12 @@ export const useEditorStore = create<EditorStore>((set, get) => ({
   },
 
   setActiveTool: (tool) => set({ activeTool: tool }),
+
+  setShapeName: (name) => set({ shapeName: name }),
+  setShapeId: (id) => set({ shapeId: id }),
+
+  setSnapToGrid: (snap) => set({ snapToGrid: snap }),
+  setGridSize: (size) => set({ gridSize: Math.max(1, Math.round(size)) }),
 
   syncCssFromPoints: () => {
     const { points, canvasSettings } = get();
@@ -266,7 +313,7 @@ export const useEditorStore = create<EditorStore>((set, get) => ({
     });
   },
 
-  loadEditorState: (state, cssOutput) => {
+  loadEditorState: (state, cssOutput, shapeId = null, shapeName = "Untitled Shape") => {
     set({
       points: state.points,
       canvasSettings: state.canvasSettings,
@@ -275,6 +322,8 @@ export const useEditorStore = create<EditorStore>((set, get) => ({
       history: [],
       future: [],
       selectedPointId: null,
+      shapeId,
+      shapeName,
     });
   },
 }));

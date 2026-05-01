@@ -27,6 +27,8 @@ export interface CanvasSettings {
   previewMode: PreviewMode;
   previewColor: string;
   previewImage?: string; // base64 data URL
+  imagePosition?: { x: number; y: number }; // background-position in percent
+  imageSize?: number; // background-size percentage (100 = natural width = container width)
 }
 
 export interface EditorState {

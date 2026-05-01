@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { useSearchParams } from "next/navigation";
 import {
   Dialog,
   DialogContent,
@@ -16,7 +17,8 @@ import { parseImport } from "@/lib/importParser";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 
 export function NewShapeDialog() {
-  const [open, setOpen] = useState(false);
+  const searchParams = useSearchParams();
+  const [open, setOpen] = useState(() => !searchParams.get("shape"));
   const [pasteValue, setPasteValue] = useState("");
   const [pasteError, setPasteError] = useState("");
   const { setPoints, canvasSettings, pushHistory } = useEditorStore();

@@ -24,6 +24,9 @@ export function Canvas() {
   const canvasRef = useRef<HTMLDivElement>(null);
   const isPanning = useRef(false);
   const lastPan = useRef({ x: 0, y: 0 });
+  const isImageDragging = useRef(false);
+  const imageDidMove = useRef(false);
+  const lastImageDrag = useRef({ x: 0, y: 0 });
   const rafRef = useRef<number | null>(null);
   const didInitCenter = useRef(false);
 
@@ -35,17 +38,27 @@ export function Canvas() {
     zoom,
     setPanOffset,
     setZoom,
+    snapToGrid,
+    gridSize,
   } = useEditorStore();
 
-  const { width, height, previewMode, previewColor, previewImage } = canvasSettings;
+  const { width, height, previewMode, previewColor, previewImage, imagePosition = { x: 50, y: 50 }, imageSize = 100 } = canvasSettings;
 
   // Refs for values the hot-path handlers read without re-registering
   const panOffsetRef = useRef(panOffset);
   const zoomRef = useRef(zoom);
   const activeToolRef = useRef(activeTool);
+  const previewModeRef = useRef(previewMode);
+  const imagePositionRef = useRef(imagePosition);
+  const snapToGridRef = useRef(snapToGrid);
+  const gridSizeRef = useRef(gridSize);
   panOffsetRef.current = panOffset;
   zoomRef.current = zoom;
   activeToolRef.current = activeTool;
+  previewModeRef.current = previewMode;
+  imagePositionRef.current = imagePosition;
+  snapToGridRef.current = snapToGrid;
+  gridSizeRef.current = gridSize;
 
   // Apply transform directly to DOM — no React re-render needed
   const applyTransform = useCallback(() => {
@@ -57,7 +70,7 @@ export function Canvas() {
     }
 
     if (gridRef.current) {
-      const baseSize = 40;
+      const baseSize = snapToGridRef.current ? gridSizeRef.current : 40;
       const cellSize = baseSize * z;
       const ox = x % cellSize;
       const oy = y % cellSize;
@@ -80,6 +93,11 @@ export function Canvas() {
   useLayoutEffect(() => {
     applyTransform();
   }, [panOffset.x, panOffset.y, applyTransform]);
+
+  // Re-draw grid when snap settings change
+  useLayoutEffect(() => {
+    applyTransform();
+  }, [snapToGrid, gridSize, applyTransform]);
 
   // Center on mount and when canvas size changes
   useEffect(() => {
@@ -132,35 +150,72 @@ export function Canvas() {
     return () => el.removeEventListener("wheel", handler);
   }, [applyTransform, scheduleSync]);
 
-  // Hand tool: pointer drag to pan
+  // Hand tool: pointer drag to pan; select tool in image mode: drag to reposition image
   const handlePointerDown = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
-    if (activeToolRef.current !== "hand") return;
-    e.currentTarget.setPointerCapture(e.pointerId);
-    isPanning.current = true;
-    lastPan.current = { x: e.clientX, y: e.clientY };
+    if (activeToolRef.current === "hand") {
+      e.currentTarget.setPointerCapture(e.pointerId);
+      isPanning.current = true;
+      lastPan.current = { x: e.clientX, y: e.clientY };
+      return;
+    }
+    if (previewModeRef.current === "image" && activeToolRef.current === "select") {
+      e.currentTarget.setPointerCapture(e.pointerId);
+      isImageDragging.current = true;
+      imageDidMove.current = false;
+      lastImageDrag.current = { x: e.clientX, y: e.clientY };
+    }
   }, []);
 
   const handlePointerMove = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
-    if (!isPanning.current) return;
-    panOffsetRef.current = {
-      x: panOffsetRef.current.x + (e.clientX - lastPan.current.x),
-      y: panOffsetRef.current.y + (e.clientY - lastPan.current.y),
-    };
-    lastPan.current = { x: e.clientX, y: e.clientY };
-    applyTransform();
-    scheduleSync();
-  }, [applyTransform, scheduleSync]);
+    if (isPanning.current) {
+      panOffsetRef.current = {
+        x: panOffsetRef.current.x + (e.clientX - lastPan.current.x),
+        y: panOffsetRef.current.y + (e.clientY - lastPan.current.y),
+      };
+      lastPan.current = { x: e.clientX, y: e.clientY };
+      applyTransform();
+      scheduleSync();
+      return;
+    }
+    if (isImageDragging.current) {
+      const dx = (e.clientX - lastImageDrag.current.x) / zoomRef.current;
+      const dy = (e.clientY - lastImageDrag.current.y) / zoomRef.current;
+      if (!imageDidMove.current && (dx !== 0 || dy !== 0)) {
+        useEditorStore.getState().pushHistory();
+        imageDidMove.current = true;
+      }
+      lastImageDrag.current = { x: e.clientX, y: e.clientY };
+      const cur = imagePositionRef.current;
+      const nx = Math.max(0, Math.min(100, cur.x - (dx / width) * 100));
+      const ny = Math.max(0, Math.min(100, cur.y - (dy / height) * 100));
+      imagePositionRef.current = { x: nx, y: ny };
+      if (canvasRef.current) {
+        canvasRef.current.style.backgroundPosition = `${nx}% ${ny}%`;
+        // keep backgroundSize stable so React's stale value doesn't flash
+        canvasRef.current.style.backgroundSize = `${useEditorStore.getState().canvasSettings.imageSize ?? 100}%`;
+      }
+    }
+  }, [applyTransform, scheduleSync, width, height]);
 
   const handlePointerUp = useCallback(() => {
     isPanning.current = false;
+    if (isImageDragging.current) {
+      isImageDragging.current = false;
+      useEditorStore.getState().setCanvasSettings({ imagePosition: imagePositionRef.current });
+    }
   }, []);
 
   // Pen tool: click to add point
   const handleCanvasClick = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
     if (activeToolRef.current !== "pen") return;
     const rect = viewportRef.current!.getBoundingClientRect();
-    const x = (e.clientX - rect.left - panOffsetRef.current.x) / zoomRef.current;
-    const y = (e.clientY - rect.top - panOffsetRef.current.y) / zoomRef.current;
+    let x = (e.clientX - rect.left - panOffsetRef.current.x) / zoomRef.current;
+    let y = (e.clientY - rect.top - panOffsetRef.current.y) / zoomRef.current;
+    if (snapToGridRef.current) {
+      const g = gridSizeRef.current;
+      x = Math.round(x / g) * g;
+      y = Math.round(y / g) * g;
+    }
     const newPoint: PathPoint = { id: uid(), x, y, type: "corner" };
     useEditorStore.getState().addPoint(newPoint);
     useEditorStore.getState().normalizeOrigin();
@@ -184,8 +239,8 @@ export function Canvas() {
   } else if (previewMode === "image" && previewImage) {
     background = {
       backgroundImage: `url(${previewImage})`,
-      backgroundSize: "cover",
-      backgroundPosition: "center",
+      backgroundSize: `${imageSize}%`,
+      backgroundPosition: `${imagePosition.x}% ${imagePosition.y}%`,
     };
   } else {
     background = { backgroundColor: previewColor };
