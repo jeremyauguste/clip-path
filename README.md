@@ -1,3 +1,17 @@
+## CSS Clip-Path Editor
+This is a site created for my Low and No-Code course at UCF using Claude to try and make creating and editing clip-paths in CSS easier. It uses Supabase to allow users to store shapes they've created using this tool so that they can edit it later.
+
+# Features
+- Preset shapes to start from
+- Start from imported CSS code or an SVG
+- Background Image support
+- Curves (Arc, Bézier, Corner, Quadratic)
+- Polygon to Path conversion
+- Pixel to Percent conversion
+- Live CSS code output
+- Export as SVG
+- Sign in with a GitHub account to save shapes to a database for future reference
+
 This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
 
 ## Getting Started
