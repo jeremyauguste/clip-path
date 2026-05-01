@@ -1,7 +1,7 @@
-## CSS Clip-Path Editor
+# CSS Clip-Path Editor
 This is a site created for my Low and No-Code course at UCF using Claude to try and make creating and editing clip-paths in CSS easier. It uses Supabase to allow users to store shapes they've created using this tool so that they can edit it later.
 
-# Features
+## Features
 - Preset shapes to start from
 - Start from imported CSS code or an SVG
 - Background Image support
