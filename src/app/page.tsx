@@ -80,7 +80,7 @@ export default function HomePage() {
                 <div>
                   <h3 className="font-semibold text-lg mb-2 text-neutral-900 dark:text-neutral-100">Why it was built</h3>
                   <p className="text-base text-neutral-600 dark:text-neutral-400 leading-relaxed">
-                    When I made custom <code className="font-mono text-violet-600 dark:text-violet-400">clip-path</code> shapes for <a className="font-mono text-violet-600 dark:text-violet-400" href="https://jeremyauguste.vercel.app">my portfolio site</a>, I thought there should be a tool out there that could help make the process easier. However, the ones I found didn't do what I wanted exactly how I wanted. After I made some mistakes creating shapes by hand and realizing that I couldn't scale them down properly, I had to find a better way. This want for an easy-to-use tool and a need to submit an AI-powered project for my Low and No-Code course at UCF led me to make this site.
+                    When I made custom <code className="font-mono text-violet-600 dark:text-violet-400">clip-path</code> shapes for my portfolio site, I thought there should be a tool out there that could help make the process easier. However, the ones I found didn't do what I wanted exactly how I wanted. After I made some mistakes creating shapes by hand and realizing that I couldn't scale them down properly, I had to find a better way. This want for an easy-to-use tool and a need to submit an AI-powered project for my Low and No-Code course at UCF led me to make this site.
                   </p>
                 </div>
               </RevealItem>
