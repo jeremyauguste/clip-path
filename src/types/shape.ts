@@ -17,6 +17,7 @@ export interface PathPoint {
   ry?: number;
   largeArc?: boolean;
   sweep?: boolean;
+  subpathStart?: boolean; // true on the first point of a new inner ring
 }
 
 export type PreviewMode = "solid" | "checkerboard" | "image";

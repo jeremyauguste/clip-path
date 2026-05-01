@@ -2,10 +2,12 @@
 
 import { useState } from "react";
 import Link from "next/link";
-import { PenLine } from "lucide-react";
+import { useRouter } from "next/navigation";
+import { PenLine, Copy } from "lucide-react";
 import { DeleteShapeButton } from "./DeleteShapeButton";
 import { buildSvgPath } from "@/lib/cssGenerator";
 import { PathPoint } from "@/types/shape";
+import { Button } from "@/components/ui/button";
 
 interface ShapeCardProps {
   id: string;
@@ -14,15 +16,40 @@ interface ShapeCardProps {
   canvasHeight: number;
   points: PathPoint[];
   updatedAt: string;
+  editorState: unknown;
+  cssOutput: string;
 }
 
-export function ShapeCard({ id, name, canvasWidth, canvasHeight, points, updatedAt }: ShapeCardProps) {
+export function ShapeCard({ id, name, canvasWidth, canvasHeight, points, updatedAt, editorState, cssOutput }: ShapeCardProps) {
+  const router = useRouter();
   const [displayName, setDisplayName] = useState(name);
   const [editName, setEditName] = useState(name);
   const [isEditing, setIsEditing] = useState(false);
+  const [duplicating, setDuplicating] = useState(false);
 
   const svgPath = buildSvgPath(points);
   const strokeWidth = Math.max(canvasWidth, canvasHeight) / 40;
+
+  const handleDuplicate = async (e: React.MouseEvent) => {
+    e.preventDefault();
+    setDuplicating(true);
+    try {
+      const res = await fetch("/api/shapes", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name: `${displayName} (copy)`,
+          editorState,
+          cssOutput,
+          canvasWidth,
+          canvasHeight,
+        }),
+      });
+      if (res.ok) router.refresh();
+    } finally {
+      setDuplicating(false);
+    }
+  };
 
   const startEdit = () => {
     setEditName(displayName);
@@ -87,13 +114,13 @@ export function ShapeCard({ id, name, canvasWidth, canvasHeight, points, updated
               if (e.key === "Escape") cancelEdit();
             }}
             onBlur={commitRename}
-            className="text-sm font-medium bg-transparent border-b border-violet-500 focus:outline-none w-full"
+            className="text-base font-medium bg-transparent border-b border-violet-500 focus:outline-none w-full"
           />
         ) : (
           <div className="flex items-center gap-1 group/name">
             <button
               onClick={startEdit}
-              className="text-sm font-medium truncate flex-1 text-left hover:text-violet-500 transition-colors"
+              className="text-base font-medium truncate flex-1 text-left hover:text-violet-500 transition-colors"
               title="Rename"
             >
               {displayName}
@@ -101,13 +128,23 @@ export function ShapeCard({ id, name, canvasWidth, canvasHeight, points, updated
             <PenLine className="w-3 h-3 opacity-0 group-hover/name:opacity-100 transition-opacity text-neutral-400 flex-shrink-0 pointer-events-none" />
           </div>
         )}
-        <p className="text-xs text-neutral-500 dark:text-neutral-400 mt-0.5">
+        <p className="text-sm text-neutral-500 dark:text-neutral-400 mt-0.5">
           {new Date(updatedAt).toLocaleDateString()}
         </p>
       </div>
 
       {/* Hover actions */}
-      <div className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity">
+      <div className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity flex gap-1">
+        <Button
+          size="icon"
+          variant="secondary"
+          className="h-7 w-7"
+          onClick={handleDuplicate}
+          disabled={duplicating}
+          title="Duplicate shape"
+        >
+          <Copy className="w-3 h-3" />
+        </Button>
         <DeleteShapeButton id={id} />
       </div>
     </div>

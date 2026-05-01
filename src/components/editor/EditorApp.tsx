@@ -16,14 +16,18 @@ function EditorInner() {
 
   return (
     <div className="flex flex-col h-screen overflow-hidden">
-      <EditorHeader />
+      <div className="animate-fade-up flex-shrink-0" style={{ animationDelay: "0ms" }}>
+        <EditorHeader />
+      </div>
       <div className="flex flex-1 overflow-hidden">
-        <Toolbar />
-        <div className="flex-1 relative overflow-hidden">
+        <div className="animate-fade-from-left flex-shrink-0" style={{ animationDelay: "60ms" }}>
+          <Toolbar />
+        </div>
+        <div className="animate-fade-in flex-1 relative overflow-hidden" style={{ animationDelay: "80ms" }}>
           <Canvas />
           <CanvasSettingsBar />
         </div>
-        <div className="w-72 flex-shrink-0">
+        <div className="animate-fade-from-right flex-shrink-0 w-72" style={{ animationDelay: "60ms" }}>
           <CodePanel />
         </div>
       </div>

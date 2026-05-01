@@ -59,13 +59,25 @@ interface EditorStore {
   setGridSize: (size: number) => void;
 
   // CSS
-  cssFormat: "percent" | "pixel";
-  setCssFormat: (format: "percent" | "pixel") => void;
+  cssFormat: "percent" | "pixel" | "path";
+  setCssFormat: (format: "percent" | "pixel" | "path") => void;
   syncCssFromPoints: () => void;
   setCssOutput: (css: string) => void;
 
+  // Transform
+  flipHorizontal: () => void;
+  flipVertical: () => void;
+  rotate90CW: () => void;
+  rotate90CCW: () => void;
+  makeHollow: () => void;
+  removeHollow: () => void;
+
   // Normalize origin: shift all points so none are negative, adjust canvas and panOffset
   normalizeOrigin: () => void;
+
+  // Fit view
+  fitViewRequested: boolean;
+  setFitViewRequested: (v: boolean) => void;
 
   // Load saved shape
   loadEditorState: (state: { points: PathPoint[]; canvasSettings: CanvasSettings }, cssOutput: string, shapeId?: string | null, shapeName?: string) => void;
@@ -98,6 +110,7 @@ export const useEditorStore = create<EditorStore>((set, get) => ({
   gridSize: 10,
   shapeName: "Untitled Shape",
   shapeId: null,
+  fitViewRequested: false,
 
   setPanOffset: (offset) => set({ panOffset: offset }),
 
@@ -251,6 +264,7 @@ export const useEditorStore = create<EditorStore>((set, get) => ({
 
   setShapeName: (name) => set({ shapeName: name }),
   setShapeId: (id) => set({ shapeId: id }),
+  setFitViewRequested: (v) => set({ fitViewRequested: v }),
 
   setSnapToGrid: (snap) => set({ snapToGrid: snap }),
   setGridSize: (size) => set({ gridSize: Math.max(1, Math.round(size)) }),
@@ -280,6 +294,132 @@ export const useEditorStore = create<EditorStore>((set, get) => ({
 
   setCssFormat: (format) => {
     set({ cssFormat: format });
+    get().syncCssFromPoints();
+  },
+
+  flipHorizontal: () => {
+    const { points } = get();
+    if (points.length < 2) return;
+    get().pushHistory();
+    const allX = points.flatMap(p => [p.x, p.cp1?.x, p.cp2?.x].filter((v): v is number => v !== undefined));
+    const minX = Math.min(...allX);
+    const maxX = Math.max(...allX);
+    const flipped = points.map(p => ({
+      ...p,
+      x: minX + maxX - p.x,
+      cp1: p.cp1 ? { x: minX + maxX - p.cp1.x, y: p.cp1.y } : undefined,
+      cp2: p.cp2 ? { x: minX + maxX - p.cp2.x, y: p.cp2.y } : undefined,
+      sweep: p.sweep !== undefined ? !p.sweep : undefined,
+    }));
+    set({ points: flipped });
+    get().syncCssFromPoints();
+  },
+
+  flipVertical: () => {
+    const { points } = get();
+    if (points.length < 2) return;
+    get().pushHistory();
+    const allY = points.flatMap(p => [p.y, p.cp1?.y, p.cp2?.y].filter((v): v is number => v !== undefined));
+    const minY = Math.min(...allY);
+    const maxY = Math.max(...allY);
+    const flipped = points.map(p => ({
+      ...p,
+      y: minY + maxY - p.y,
+      cp1: p.cp1 ? { x: p.cp1.x, y: minY + maxY - p.cp1.y } : undefined,
+      cp2: p.cp2 ? { x: p.cp2.x, y: minY + maxY - p.cp2.y } : undefined,
+      sweep: p.sweep !== undefined ? !p.sweep : undefined,
+    }));
+    set({ points: flipped });
+    get().syncCssFromPoints();
+  },
+
+  rotate90CW: () => {
+    const { points } = get();
+    if (points.length < 2) return;
+    get().pushHistory();
+    const allX = points.flatMap(p => [p.x, p.cp1?.x, p.cp2?.x].filter((v): v is number => v !== undefined));
+    const allY = points.flatMap(p => [p.y, p.cp1?.y, p.cp2?.y].filter((v): v is number => v !== undefined));
+    const cx = (Math.min(...allX) + Math.max(...allX)) / 2;
+    const cy = (Math.min(...allY) + Math.max(...allY)) / 2;
+    const rot = (x: number, y: number) => ({ x: cx - (y - cy), y: cy + (x - cx) });
+    const rotated = points.map(p => {
+      const { x, y } = rot(p.x, p.y);
+      const cp1 = p.cp1 ? rot(p.cp1.x, p.cp1.y) : undefined;
+      const cp2 = p.cp2 ? rot(p.cp2.x, p.cp2.y) : undefined;
+      return { ...p, x, y, cp1, cp2, ...(p.rx !== undefined || p.ry !== undefined ? { rx: p.ry, ry: p.rx } : {}) };
+    });
+    const newAllX = rotated.flatMap(p => [p.x, p.cp1?.x, p.cp2?.x].filter((v): v is number => v !== undefined));
+    const newAllY = rotated.flatMap(p => [p.y, p.cp1?.y, p.cp2?.y].filter((v): v is number => v !== undefined));
+    const dx = -Math.min(0, Math.min(...newAllX));
+    const dy = -Math.min(0, Math.min(...newAllY));
+    const normalized = rotated.map(p => ({
+      ...p,
+      x: p.x + dx, y: p.y + dy,
+      cp1: p.cp1 ? { x: p.cp1.x + dx, y: p.cp1.y + dy } : undefined,
+      cp2: p.cp2 ? { x: p.cp2.x + dx, y: p.cp2.y + dy } : undefined,
+    }));
+    set({ points: normalized });
+    get().syncCssFromPoints();
+  },
+
+  rotate90CCW: () => {
+    const { points } = get();
+    if (points.length < 2) return;
+    get().pushHistory();
+    const allX = points.flatMap(p => [p.x, p.cp1?.x, p.cp2?.x].filter((v): v is number => v !== undefined));
+    const allY = points.flatMap(p => [p.y, p.cp1?.y, p.cp2?.y].filter((v): v is number => v !== undefined));
+    const cx = (Math.min(...allX) + Math.max(...allX)) / 2;
+    const cy = (Math.min(...allY) + Math.max(...allY)) / 2;
+    const rot = (x: number, y: number) => ({ x: cx + (y - cy), y: cy - (x - cx) });
+    const rotated = points.map(p => {
+      const { x, y } = rot(p.x, p.y);
+      const cp1 = p.cp1 ? rot(p.cp1.x, p.cp1.y) : undefined;
+      const cp2 = p.cp2 ? rot(p.cp2.x, p.cp2.y) : undefined;
+      return { ...p, x, y, cp1, cp2, ...(p.rx !== undefined || p.ry !== undefined ? { rx: p.ry, ry: p.rx } : {}) };
+    });
+    const newAllX = rotated.flatMap(p => [p.x, p.cp1?.x, p.cp2?.x].filter((v): v is number => v !== undefined));
+    const newAllY = rotated.flatMap(p => [p.y, p.cp1?.y, p.cp2?.y].filter((v): v is number => v !== undefined));
+    const dx = -Math.min(0, Math.min(...newAllX));
+    const dy = -Math.min(0, Math.min(...newAllY));
+    const normalized = rotated.map(p => ({
+      ...p,
+      x: p.x + dx, y: p.y + dy,
+      cp1: p.cp1 ? { x: p.cp1.x + dx, y: p.cp1.y + dy } : undefined,
+      cp2: p.cp2 ? { x: p.cp2.x + dx, y: p.cp2.y + dy } : undefined,
+    }));
+    set({ points: normalized });
+    get().syncCssFromPoints();
+  },
+
+  makeHollow: () => {
+    const { points } = get();
+    if (points.length < 3) return;
+    if (points.some((p) => p.subpathStart)) return; // already hollow
+    get().pushHistory();
+    const cx = points.reduce((s, p) => s + p.x, 0) / points.length;
+    const cy = points.reduce((s, p) => s + p.y, 0) / points.length;
+    const factor = 0.5;
+    const inner: typeof points = points.map((p, i) => ({
+      ...p,
+      id: Math.random().toString(36).slice(2, 9),
+      x: cx + (p.x - cx) * factor,
+      y: cy + (p.y - cy) * factor,
+      cp1: p.cp1 ? { x: cx + (p.cp1.x - cx) * factor, y: cy + (p.cp1.y - cy) * factor } : undefined,
+      cp2: p.cp2 ? { x: cx + (p.cp2.x - cx) * factor, y: cy + (p.cp2.y - cy) * factor } : undefined,
+      rx: p.rx !== undefined ? p.rx * factor : undefined,
+      ry: p.ry !== undefined ? p.ry * factor : undefined,
+      subpathStart: i === 0 ? true : undefined,
+    }));
+    set({ points: [...points, ...inner] });
+    get().syncCssFromPoints();
+  },
+
+  removeHollow: () => {
+    const { points } = get();
+    const innerStart = points.findIndex((p, i) => i > 0 && p.subpathStart);
+    if (innerStart === -1) return;
+    get().pushHistory();
+    set({ points: points.slice(0, innerStart) });
     get().syncCssFromPoints();
   },
 

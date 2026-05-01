@@ -40,6 +40,8 @@ export function Canvas() {
     setZoom,
     snapToGrid,
     gridSize,
+    fitViewRequested,
+    setFitViewRequested,
   } = useEditorStore();
 
   const { width, height, previewMode, previewColor, previewImage, imagePosition = { x: 50, y: 50 }, imageSize = 100 } = canvasSettings;
@@ -112,6 +114,27 @@ export function Canvas() {
     setPanOffset({ x, y });
     setZoom(1);
   }, [width, height, applyTransform]);
+
+  // Zoom to fit: center the canvas and scale it to fill the viewport with padding
+  useEffect(() => {
+    if (!fitViewRequested) return;
+    setFitViewRequested(false);
+    const vp = viewportRef.current;
+    if (!vp) return;
+    const rect = vp.getBoundingClientRect();
+    if (!rect.width || !rect.height) return;
+    const padding = 40;
+    const fitZ = Math.max(MIN_ZOOM, Math.min(MAX_ZOOM,
+      Math.min((rect.width - padding * 2) / width, (rect.height - padding * 2) / height)
+    ));
+    const px = (rect.width  - width  * fitZ) / 2;
+    const py = (rect.height - height * fitZ) / 2;
+    panOffsetRef.current = { x: px, y: py };
+    zoomRef.current = fitZ;
+    applyTransform();
+    setPanOffset({ x: px, y: py });
+    setZoom(fitZ);
+  }, [fitViewRequested, width, height, applyTransform, setPanOffset, setZoom, setFitViewRequested]);
 
   // Non-passive wheel — handles two-finger pan and pinch-to-zoom
   useEffect(() => {
@@ -308,7 +331,7 @@ export function Canvas() {
         <BoundingBox zoom={zoom} />
       </div>
 
-      <div className="absolute bottom-4 right-4 text-xs text-neutral-400 dark:text-neutral-500 select-none pointer-events-none">
+      <div className="absolute bottom-4 right-4 text-sm text-neutral-400 dark:text-neutral-500 select-none pointer-events-none">
         {Math.round(zoom * 100)}%
       </div>
     </div>

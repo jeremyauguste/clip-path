@@ -4,6 +4,10 @@ function hasCurves(points: PathPoint[]): boolean {
   return points.some((p) => p.type === "smooth" || p.type === "quadratic" || p.type === "arc");
 }
 
+function hasSubpaths(points: PathPoint[]): boolean {
+  return points.some((p) => p.subpathStart);
+}
+
 export function segmentCmd(prev: PathPoint, cur: PathPoint): string {
   if (cur.type === "arc") {
     const rx = +(cur.rx ?? 50).toFixed(3);
@@ -24,8 +28,8 @@ export function segmentCmd(prev: PathPoint, cur: PathPoint): string {
   return ` L ${cur.x} ${cur.y}`;
 }
 
-// Shared path builder used by both the CSS generator and the SVG overlay
-export function buildSvgPath(points: PathPoint[]): string {
+// Builds a single closed ring (no subpath awareness)
+function buildRingPath(points: PathPoint[]): string {
   if (!points.length) return "";
   const [first, ...rest] = points;
   let d = `M ${first.x} ${first.y}`;
@@ -47,6 +51,26 @@ export function buildSvgPath(points: PathPoint[]): string {
   return d;
 }
 
+// Shared path builder used by both the CSS generator and the SVG overlay.
+// Splits on subpathStart markers so inner rings become separate closed rings.
+export function buildSvgPath(points: PathPoint[]): string {
+  if (!points.length) return "";
+
+  const rings: PathPoint[][] = [];
+  let current: PathPoint[] = [];
+  for (const p of points) {
+    if (p.subpathStart && current.length > 0) {
+      rings.push(current);
+      current = [p];
+    } else {
+      current.push(p);
+    }
+  }
+  if (current.length > 0) rings.push(current);
+
+  return rings.map(buildRingPath).join(" ");
+}
+
 function toPolygon(points: PathPoint[], w: number, h: number): string {
   const coords = points
     .map((p) => `${((p.x / w) * 100).toFixed(1)}% ${((p.y / h) * 100).toFixed(1)}%`)
@@ -63,10 +87,13 @@ export function generateCssOutput(
   points: PathPoint[],
   w: number,
   h: number,
-  format: "percent" | "pixel" = "percent"
+  format: "percent" | "pixel" | "path" = "percent",
 ): string {
   if (!points.length) return "";
-  if (hasCurves(points)) {
+  if (hasSubpaths(points)) {
+    return `clip-path: path(evenodd, "${buildSvgPath(points)}");`;
+  }
+  if (hasCurves(points) || format === "path") {
     return `clip-path: path("${buildSvgPath(points)}");`;
   }
   return format === "pixel" ? toPolygonPx(points) : toPolygon(points, w, h);

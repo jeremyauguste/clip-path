@@ -14,6 +14,24 @@ function midpoint(ax: number, ay: number, bx: number, by: number) {
   return { x: (ax + bx) / 2, y: (ay + by) / 2 };
 }
 
+// Returns the center of the circle that produces the given SVG arc.
+// sweep=true → center is to the left of the P1→P2 direction (SVG y-down convention).
+function computeArcCenter(
+  p1: { x: number; y: number },
+  p2: { x: number; y: number },
+  r: number,
+  sweep: boolean,
+): { x: number; y: number } | null {
+  const dx = p2.x - p1.x, dy = p2.y - p1.y;
+  const d = Math.hypot(dx, dy);
+  if (d < 1e-6 || d > 2 * r) return null;
+  const midX = (p1.x + p2.x) / 2, midY = (p1.y + p2.y) / 2;
+  const h = Math.sqrt(Math.max(0, r * r - (d / 2) * (d / 2)));
+  const px = -dy / d, py = dx / d; // perp unit vector (left of P1→P2)
+  const sign = sweep ? 1 : -1;
+  return { x: midX + sign * h * px, y: midY + sign * h * py };
+}
+
 // Closest point on segment AB to point P
 function closestPointOnSegment(
   px: number, py: number,
@@ -133,6 +151,10 @@ export function SvgOverlay({ width, height, zoom, viewportRef, panOffset, panOff
   const draggingId = useRef<string | null>(null);
   const draggingHandle = useRef<"cp1" | "cp2" | null>(null);
   const draggingArcId = useRef<string | null>(null);
+  const dragStartCanvasPos = useRef<{ x: number; y: number } | null>(null);
+  const dragStartPoint = useRef<PathPoint | null>(null);
+  const dragArcCenter = useRef<{ x: number; y: number; r: number } | null>(null);
+  const shiftWasActive = useRef(false);
   const [hoverPoint, setHoverPoint] = useState<{ x: number; y: number; edgeIndex: number } | null>(null);
   const [hoveredPointId, setHoveredPointId] = useState<string | null>(null);
   const [pointTooltip, setPointTooltip] = useState<{ point: PathPoint; index: number; clientX: number; clientY: number } | null>(null);
@@ -169,8 +191,26 @@ export function SvgOverlay({ width, height, zoom, viewportRef, panOffset, panOff
       draggingHandle.current = handle ?? null;
       setPointTooltip(null);
       pushHistory();
+      if (!handle) {
+        const pos = toCanvas(e.clientX, e.clientY);
+        dragStartCanvasPos.current = pos;
+        const pt = useEditorStore.getState().points.find((p) => p.id === id) ?? null;
+        dragStartPoint.current = pt;
+        shiftWasActive.current = e.shiftKey;
+        dragArcCenter.current = null;
+        if (e.shiftKey && pt?.type === "arc") {
+          const pts = useEditorStore.getState().points;
+          const idx = pts.findIndex((p) => p.id === id);
+          if (idx >= 0) {
+            const p1 = idx > 0 ? pts[idx - 1] : pts[pts.length - 1];
+            const r = pt.rx ?? 50;
+            const center = computeArcCenter(p1, pos, r, pt.sweep !== false);
+            if (center) dragArcCenter.current = { ...center, r };
+          }
+        }
+      }
     },
-    [activeTool, pushHistory]
+    [activeTool, pushHistory, toCanvas]
   );
 
   const startArcDrag = useCallback(
@@ -211,22 +251,70 @@ export function SvgOverlay({ width, height, zoom, viewportRef, panOffset, panOff
       const id = draggingId.current!;
       const handle = draggingHandle.current;
 
-      // Direct DOM update for smooth drag
       const svgEl = e.currentTarget;
-      if (handle) {
-        const el = svgEl.querySelector(`[data-handle="${id}-${handle}"]`);
-        if (el) { el.setAttribute("cx", String(cx)); el.setAttribute("cy", String(cy)); }
-      } else {
-        const el = svgEl.querySelector(`[data-point="${id}"]`);
-        if (el) { el.setAttribute("cx", String(cx)); el.setAttribute("cy", String(cy)); }
-      }
 
       if (handle === "cp1") {
+        const el = svgEl.querySelector(`[data-handle="${id}-${handle}"]`);
+        if (el) { el.setAttribute("cx", String(cx)); el.setAttribute("cy", String(cy)); }
         updatePoint(id, { cp1: { x: cx, y: cy } });
       } else if (handle === "cp2") {
+        const el = svgEl.querySelector(`[data-handle="${id}-${handle}"]`);
+        if (el) { el.setAttribute("cx", String(cx)); el.setAttribute("cy", String(cy)); }
         updatePoint(id, { cp2: { x: cx, y: cy } });
       } else {
-        updatePoint(id, { x: cx, y: cy });
+        // Re-anchor reference when Shift is first pressed mid-drag
+        if (e.shiftKey && !shiftWasActive.current) {
+          dragStartCanvasPos.current = { x: cx, y: cy };
+          const pt = useEditorStore.getState().points.find((p) => p.id === id) ?? null;
+          dragStartPoint.current = pt;
+          dragArcCenter.current = null;
+          if (pt?.type === "arc") {
+            const pts = useEditorStore.getState().points;
+            const idx = pts.findIndex((p) => p.id === id);
+            if (idx >= 0) {
+              const p1 = idx > 0 ? pts[idx - 1] : pts[pts.length - 1];
+              const r = pt.rx ?? 50;
+              const center = computeArcCenter(p1, { x: cx, y: cy }, r, pt.sweep !== false);
+              if (center) dragArcCenter.current = { ...center, r };
+            }
+          }
+        }
+        shiftWasActive.current = e.shiftKey;
+
+        const start = dragStartCanvasPos.current;
+        const startPt = dragStartPoint.current;
+
+        if (e.shiftKey && start && startPt && (startPt.cp1 || startPt.cp2)) {
+          // Bezier: translate handles with the anchor
+          const dx = cx - start.x;
+          const dy = cy - start.y;
+          const newCp1 = startPt.cp1 ? { x: startPt.cp1.x + dx, y: startPt.cp1.y + dy } : undefined;
+          const newCp2 = startPt.cp2 ? { x: startPt.cp2.x + dx, y: startPt.cp2.y + dy } : undefined;
+          const h1 = svgEl.querySelector(`[data-handle="${id}-cp1"]`);
+          if (h1 && newCp1) { h1.setAttribute("cx", String(newCp1.x)); h1.setAttribute("cy", String(newCp1.y)); }
+          const h2 = svgEl.querySelector(`[data-handle="${id}-cp2"]`);
+          if (h2 && newCp2) { h2.setAttribute("cx", String(newCp2.x)); h2.setAttribute("cy", String(newCp2.y)); }
+          const l1 = svgEl.querySelector(`[data-handle-line="${id}-cp1"]`);
+          if (l1 && newCp1) { l1.setAttribute("x1", String(cx)); l1.setAttribute("y1", String(cy)); l1.setAttribute("x2", String(newCp1.x)); l1.setAttribute("y2", String(newCp1.y)); }
+          const l2 = svgEl.querySelector(`[data-handle-line="${id}-cp2"]`);
+          if (l2 && newCp2) { l2.setAttribute("x1", String(cx)); l2.setAttribute("y1", String(cy)); l2.setAttribute("x2", String(newCp2.x)); l2.setAttribute("y2", String(newCp2.y)); }
+          const el = svgEl.querySelector(`[data-point="${id}"]`);
+          if (el) { el.setAttribute("cx", String(cx)); el.setAttribute("cy", String(cy)); }
+          updatePoint(id, { x: cx, y: cy, ...(newCp1 && { cp1: newCp1 }), ...(newCp2 && { cp2: newCp2 }) });
+        } else if (e.shiftKey && startPt?.type === "arc" && dragArcCenter.current) {
+          // Arc: slide endpoint along the existing circle
+          const { x: ox, y: oy, r } = dragArcCenter.current;
+          const dx = cx - ox, dy = cy - oy;
+          const dist = Math.hypot(dx, dy);
+          if (dist > 1e-6) { cx = ox + (dx / dist) * r; cy = oy + (dy / dist) * r; }
+          const el = svgEl.querySelector(`[data-point="${id}"]`);
+          if (el) { el.setAttribute("cx", String(cx)); el.setAttribute("cy", String(cy)); }
+          updatePoint(id, { x: cx, y: cy });
+        } else {
+          const el = svgEl.querySelector(`[data-point="${id}"]`);
+          if (el) { el.setAttribute("cx", String(cx)); el.setAttribute("cy", String(cy)); }
+          updatePoint(id, { x: cx, y: cy });
+        }
       }
     },
     [toCanvas, updatePoint]
@@ -374,7 +462,7 @@ export function SvgOverlay({ width, height, zoom, viewportRef, panOffset, panOff
           if (!p.cp1) return null;
           return (
             <g key={`handles-${p.id}`}>
-              <line x1={p.x} y1={p.y} x2={p.cp1.x} y2={p.cp1.y} stroke="#34d399" strokeWidth={1 / zoom} strokeDasharray={`${3 / zoom} ${2 / zoom}`} pointerEvents="none" />
+              <line data-handle-line={`${p.id}-cp1`} x1={p.x} y1={p.y} x2={p.cp1.x} y2={p.cp1.y} stroke="#34d399" strokeWidth={1 / zoom} strokeDasharray={`${3 / zoom} ${2 / zoom}`} pointerEvents="none" />
               <circle
                 data-handle={`${p.id}-cp1`}
                 cx={p.cp1.x} cy={p.cp1.y} r={rHandle}
@@ -390,7 +478,7 @@ export function SvgOverlay({ width, height, zoom, viewportRef, panOffset, panOff
           <g key={`handles-${p.id}`}>
             {p.cp1 && (
               <>
-                <line x1={p.x} y1={p.y} x2={p.cp1.x} y2={p.cp1.y} stroke="#fb923c" strokeWidth={1 / zoom} strokeDasharray={`${3 / zoom} ${2 / zoom}`} pointerEvents="none" />
+                <line data-handle-line={`${p.id}-cp1`} x1={p.x} y1={p.y} x2={p.cp1.x} y2={p.cp1.y} stroke="#fb923c" strokeWidth={1 / zoom} strokeDasharray={`${3 / zoom} ${2 / zoom}`} pointerEvents="none" />
                 <circle
                   data-handle={`${p.id}-cp1`}
                   cx={p.cp1.x} cy={p.cp1.y} r={rHandle}
@@ -402,7 +490,7 @@ export function SvgOverlay({ width, height, zoom, viewportRef, panOffset, panOff
             )}
             {p.cp2 && (
               <>
-                <line x1={p.x} y1={p.y} x2={p.cp2.x} y2={p.cp2.y} stroke="#fb923c" strokeWidth={1 / zoom} strokeDasharray={`${3 / zoom} ${2 / zoom}`} pointerEvents="none" />
+                <line data-handle-line={`${p.id}-cp2`} x1={p.x} y1={p.y} x2={p.cp2.x} y2={p.cp2.y} stroke="#fb923c" strokeWidth={1 / zoom} strokeDasharray={`${3 / zoom} ${2 / zoom}`} pointerEvents="none" />
                 <circle
                   data-handle={`${p.id}-cp2`}
                   cx={p.cp2.x} cy={p.cp2.y} r={rHandle}
